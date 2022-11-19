@@ -17,6 +17,13 @@ fn main() {
     let mut telegram = Telegram::new(&sender);
     let mut tracker = Tracker::restore().unwrap_or(Tracker::new());
 
+    // Ensuring that the program stops if any thread panics, so that it can be restarted
+    let orig_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |panic_info| {
+        orig_hook(panic_info);
+        std::process::exit(1);
+    }));
+
     std::thread::spawn(telegram.get_loop());
     std::thread::spawn(http::get_loop());
 
