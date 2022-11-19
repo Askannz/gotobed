@@ -27,6 +27,8 @@ fn main() {
     std::thread::spawn(telegram.get_loop());
     std::thread::spawn(http::get_loop());
 
+    telegram.send("Starting...".into());
+
     loop {
 
         let msg = receiver.recv().unwrap();
