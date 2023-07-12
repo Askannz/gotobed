@@ -8,12 +8,6 @@ use tiny_http::{Server, Response, Header, Method};
 use ascii::AsciiString;
 use crate::tracker::{Tracker, LOG_PATH};
 
-struct DataPoint {
-    x_coord: i64,
-    y_coord: f64,
-    hover: String
-}
-
 pub fn get_loop() -> impl FnOnce() {
 
     let host = std::env::var("GOTOBED_PLOT_HOST").unwrap_or("0.0.0.0".into());
@@ -57,43 +51,71 @@ fn render_html() -> String {
         .map_err(anyhow::Error::new)
         .expect(&format!("Cannot restore time log"));
 
+    //
+    // Plotting history
+
     let times_list: Vec<DateTime<Tz>> = tracker.time_log.iter()
         .map(|(t_utc, timezone)| timezone.from_utc_datetime(&t_utc.naive_utc()))
         .collect();
 
     let (x_ticks_values, x_ticks_labels) = get_x_ticks(&times_list);
     let (y_ticks_values, y_ticks_labels) = get_y_ticks();
-    let xmax = x_ticks_values.iter().fold(-f64::INFINITY, |a, &b| a.max(b));
 
     let layout = Layout::new()
         .x_axis(
             Axis::new()
-                .tick_values(x_ticks_values)
+                .tick_values(x_ticks_values.clone())
                 .tick_text(x_ticks_labels)
         )
         .y_axis(
             Axis::new()
-                .tick_values(y_ticks_values)
+                .tick_values(y_ticks_values.clone())
                 .tick_text(y_ticks_labels)
                 .constrain_toward(ConstrainDirection::Top)
         );
 
-    let datapoints: Vec<DataPoint> = times_list.iter()
-        .map(|t| get_datapoint(&times_list[0], t)).collect();
+    let y_coords: Vec<f64> = times_list.iter()
+        .map(|t| hourminute_to_y(t.hour() as i16, t.minute() as i16))
+        .collect();
 
-    let x_coords: Vec<i64> = datapoints.iter().map(|dp| dp.x_coord).collect();
-    let y_coords: Vec<f64> = datapoints.iter().map(|dp| dp.y_coord).collect();
-    let hovers: Vec<String> = datapoints.iter().map(|dp| dp.hover.clone()).collect();
+    let tmin = &times_list[0];
+    let x_coords: Vec<i64> = times_list.iter()
+        .map(|t| get_x_coord(tmin, t))
+        .collect();
 
-    let log_trace = Scatter::new(x_coords, y_coords)
+    let hovers: Vec<String> = y_coords.iter()
+    .map(|&y| {
+        let (h, m) = y_to_hourminute(y);
+        format!("{:0>2}:{:0>2}", h, m)
+    })
+    .collect();
+
+    let log_trace = Scatter::new(x_coords.clone(), y_coords.clone())
+        .line(Line::new().color("blue"))
         .mode(Mode::LinesMarkers)
         .hover_info(HoverInfo::Text)
         .hover_text_array(hovers)
         .show_legend(false);
+
+    //
+    // Plotting average
+
+    let y_coords_avg: Vec<f64> = avg_filter_y(&y_coords);
+
+    let avg_trace = Scatter::new(x_coords.clone(), y_coords_avg.clone())
+        .line(Line::new().color("green"))
+        .mode(Mode::Lines)
+        .hover_info(HoverInfo::None)
+        .show_legend(false);
+
+    //
+    // Plot target line
         
     let (target_h, target_m): (u32, u32) = (23, 0);
 
     let target_y_val = 24.0 - (((target_h - 12) as f64) + (target_m as f64) / 60.0);
+
+    let xmax = x_ticks_values.iter().fold(-f64::INFINITY, |a, &b| a.max(b));
 
     let target_x_coords = vec![0f64, xmax];
     let target_y_coords = vec![target_y_val, target_y_val];
@@ -103,8 +125,12 @@ fn render_html() -> String {
         .mode(Mode::Lines)
         .show_legend(false);
 
+    //
+    // Render
+
     let mut plot = Plot::new();
     plot.add_trace(log_trace);
+    plot.add_trace(avg_trace);
     plot.add_trace(target_trace);
     plot.set_layout(layout);
 
@@ -112,31 +138,48 @@ fn render_html() -> String {
 
 }
 
-fn get_datapoint(tmin: &DateTime<Tz>, t: &DateTime<Tz>) -> DataPoint {
+fn hourminute_to_y(h: i16, m: i16) -> f64 {
+    let h = (h - 12).rem_euclid(24);
+    let y = (h as f64) + (m as f64) / 60.0;
+    let y = 24.0 - y;
+    y
+}
 
+fn y_to_hourminute(y: f64) -> (i16, i16) {
+    let y = 24.0 - y;
+    let h = y.floor();
+    let m = ((y - h) * 60.0).round() as i16;
+    let h = h as i16;
+    let h = (h + 12) % 24;
+    (h, m)
+}
+
+fn get_x_coord(tmin: &DateTime<Tz>, t: &DateTime<Tz>) -> i64 {
     let t_offset = *t - Duration::hours(12);
     let tmin_offset = *tmin - Duration::hours(12);
-    let d_offset = t_offset.date();
-
     let x_coord = (t_offset.date() - tmin_offset.date()).num_days();
-    let y_coord = get_y_coord(t_offset.hour(), t_offset.minute());
-    let x_label = format!("{}/{}", d_offset.day(), d_offset.month());
-    let y_label = format!("{:0>2}:{:0>2}", t.hour(), t.minute());
-
-    let hover = format!("{} {}", x_label, y_label);
-
-    DataPoint {
-        x_coord,
-        y_coord,
-        hover
-    }
+    x_coord
 }
 
+fn avg_filter_y(y_coords: &Vec<f64>) -> Vec<f64> {
+    const N: usize = 7;
+    let mut v1 = y_coords.clone();
+    let mut v2 = vec![v1[0]; N - 1];
+    v2.append(&mut v1);
 
-fn get_y_coord(h: u32, m: u32) -> f64 {
-    24.0 - ((h as f64) + (m as f64) / 60.0)
+    let v3: Vec<f64> = v2
+        .windows(N)
+        .map(|vals| {
+            let s: f64 = vals.iter().sum();
+            let n = vals.len() as f64;
+            s / n
+        })
+        .collect();
+
+    assert_eq!(v3.len(), y_coords.len());
+
+    v3
 }
-
 
 fn get_x_ticks(times_list: &Vec<DateTime<Tz>>) -> (Vec<f64>, Vec<String>) {
 
