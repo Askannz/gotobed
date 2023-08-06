@@ -1,12 +1,16 @@
-use log::info;
+use log::{info, debug};
 use chrono::{DateTime, TimeZone,  Duration, Datelike, Timelike};
 use chrono_tz::Tz;
 use plotly::common::{Mode, HoverInfo, Line};
+use plotly::layout::UniformTextMode;
 use plotly::{Plot, Scatter, Layout, layout::{Axis, ConstrainDirection}};
 
 use tiny_http::{Server, Response, Header, Method};
 use ascii::AsciiString;
 use crate::tracker::{Tracker, LOG_PATH};
+
+const TARGET_H: u32 = 23;
+const TARGET_M: u32 = 20;
 
 pub fn get_loop() -> impl FnOnce() {
 
@@ -57,6 +61,8 @@ fn render_html() -> String {
     let times_list: Vec<DateTime<Tz>> = tracker.time_log.iter()
         .map(|(t_utc, timezone)| timezone.from_utc_datetime(&t_utc.naive_utc()))
         .collect();
+
+    debug!("{} entries in history", times_list.len());
 
     let (x_ticks_values, x_ticks_labels) = get_x_ticks(&times_list);
     let (y_ticks_values, y_ticks_labels) = get_y_ticks();
@@ -110,10 +116,8 @@ fn render_html() -> String {
 
     //
     // Plot target line
-        
-    let (target_h, target_m): (u32, u32) = (23, 0);
 
-    let target_y_val = 24.0 - (((target_h - 12) as f64) + (target_m as f64) / 60.0);
+    let target_y_val = 24.0 - (((TARGET_H - 12) as f64) + (TARGET_M as f64) / 60.0);
 
     let xmax = x_ticks_values.iter().fold(-f64::INFINITY, |a, &b| a.max(b));
 
@@ -134,8 +138,38 @@ fn render_html() -> String {
     plot.add_trace(target_trace);
     plot.set_layout(layout);
 
-    plot.to_html()
+    let plot_html = plot.to_html();
 
+    //
+    // Streak counter
+
+    let streaks = compute_streaks(target_y_val, &y_coords);
+    let curr_streak = streaks.last().unwrap_or(&0);
+    let best_streak = streaks.iter().max().unwrap_or(&0);
+    let streak_html = format!(
+        "<b>Target</b>: {TARGET_H:02}:{TARGET_M:02}</br>
+        <b>Streak</b>: {curr_streak} days</br>
+        <b>Best</b>: {best_streak} days</br>"
+    );
+
+    vec![plot_html, streak_html].join("\n")
+}
+
+fn compute_streaks(target_y_val: f64, y_coords: &Vec<f64>) -> Vec<u64> {
+
+    let mut streaks = Vec::new();
+    let mut c = 0;
+    for y in y_coords.iter().rev() {
+        match y < &target_y_val {
+            true => {
+                streaks.push(c);
+                c = 0;
+            },
+            false => c += 1
+        }
+    }
+
+    streaks
 }
 
 fn hourminute_to_y(h: i16, m: i16) -> f64 {
