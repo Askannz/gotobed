@@ -2,12 +2,14 @@ use log::{info, debug};
 use chrono::{DateTime, TimeZone,  Duration, Datelike, Timelike};
 use chrono_tz::Tz;
 use plotly::common::{Mode, HoverInfo, Line};
-use plotly::layout::UniformTextMode;
-use plotly::{Plot, Scatter, Layout, layout::{Axis, ConstrainDirection}};
+use plotly::{Plot, Scatter, Layout, layout::{Axis, ConstrainDirection, RangeSlider}};
 
 use tiny_http::{Server, Response, Header, Method};
 use ascii::AsciiString;
 use crate::tracker::{Tracker, LOG_PATH};
+
+const PLOT_H: usize = 800;
+const DEFAULT_RANGE: usize = 100;
 
 const TARGET_H: u32 = 23;
 const TARGET_M: u32 = 20;
@@ -62,23 +64,33 @@ fn render_html() -> String {
         .map(|(t_utc, timezone)| timezone.from_utc_datetime(&t_utc.naive_utc()))
         .collect();
 
-    debug!("{} entries in history", times_list.len());
+    let n = times_list.len();
+
+    debug!("{n} entries in history");
 
     let (x_ticks_values, x_ticks_labels) = get_x_ticks(&times_list);
     let (y_ticks_values, y_ticks_labels) = get_y_ticks();
+
+    let x_max = x_ticks_values.iter().cloned().fold(0.0, f64::max);
+    let dx = DEFAULT_RANGE as f64;
+    let range = vec![x_max-dx, x_max];
 
     let layout = Layout::new()
         .x_axis(
             Axis::new()
                 .tick_values(x_ticks_values.clone())
                 .tick_text(x_ticks_labels)
+                .auto_range(false)
+                .range(range)
+                .range_slider(RangeSlider::new())
         )
         .y_axis(
             Axis::new()
                 .tick_values(y_ticks_values.clone())
                 .tick_text(y_ticks_labels)
                 .constrain_toward(ConstrainDirection::Top)
-        );
+        )
+        .height(PLOT_H);
 
     let y_coords: Vec<f64> = times_list.iter()
         .map(|t| hourminute_to_y(t.hour() as i16, t.minute() as i16))
