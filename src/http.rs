@@ -156,7 +156,7 @@ fn render_html() -> String {
     // Streak counter
 
     let streaks = compute_streaks(target_y_val, &y_coords);
-    let curr_streak = streaks.last().unwrap_or(&0);
+    let curr_streak = streaks.first().unwrap_or(&0);
     let best_streak = streaks.iter().max().unwrap_or(&0);
     let streak_html = format!(
         "<b>Target</b>: {TARGET_H:02}:{TARGET_M:02}</br>
