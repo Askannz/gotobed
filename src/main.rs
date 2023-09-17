@@ -29,16 +29,37 @@ fn main() {
 
     telegram.send("Starting...".into());
 
+    let re_log = regex::Regex::new(r"^/?log$").unwrap();
+    let re_target_print = regex::Regex::new(r"^/?target$").unwrap();
+    let re_target_set = regex::Regex::new(r"^/?target ([0-9]{1,2}):([0-9]{1,2})$").unwrap();
+
     loop {
 
         let msg = receiver.recv().unwrap();
-
-        let resp: String = match msg.as_str() {
-            "log" | "/log" => {
+        let msg = msg.as_str();
+     
+        let resp = {
+            if re_log.is_match(msg) {
                 let local_t = tracker.log();
                 format!("{}", local_t.format("%d/%m/%Y %H:%M"))
-            },
-            _ => "Unknown command".into()
+            }
+            else if re_target_print.is_match(msg) {
+                let (t_h, t_m) = tracker.current_target;
+                format!("Current target: {t_h:02}:{t_m:02}")
+            }
+            else if let Some(caps) = re_target_set.captures(msg) {
+                let t_h: u8 = caps.get(1).unwrap().as_str().parse().unwrap();
+                let t_m: u8 = caps.get(2).unwrap().as_str().parse().unwrap();
+                if t_h > 23 || t_m > 59 {
+                    "Invalid target time".into()
+                } else {
+                    tracker.set_target((t_h, t_m));
+                    format!("Set target to {t_h:02}:{t_m:02}")
+                }
+            }
+            else {
+                "Invalid command".into()
+            }
         };
 
         telegram.send(&resp);

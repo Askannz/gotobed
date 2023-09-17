@@ -11,9 +11,6 @@ use crate::tracker::{Tracker, LOG_PATH};
 const PLOT_H: usize = 800;
 const DEFAULT_RANGE: usize = 100;
 
-const TARGET_H: u32 = 23;
-const TARGET_M: u32 = 20;
-
 pub fn get_loop() -> impl FnOnce() {
 
     let host = std::env::var("GOTOBED_PLOT_HOST").unwrap_or("0.0.0.0".into());
@@ -61,7 +58,11 @@ fn render_html() -> String {
     // Plotting history
 
     let times_list: Vec<DateTime<Tz>> = tracker.time_log.iter()
-        .map(|(t_utc, timezone)| timezone.from_utc_datetime(&t_utc.naive_utc()))
+        .map(|entry| entry.timezone.from_utc_datetime(&entry.bedtime.naive_utc()))
+        .collect();
+
+    let targets_list: Vec<(u8, u8)> = tracker.time_log.iter()
+        .map(|entry| entry.target)
         .collect();
 
     let n = times_list.len();
@@ -129,14 +130,12 @@ fn render_html() -> String {
     //
     // Plot target line
 
-    let target_y_val = 24.0 - (((TARGET_H - 12) as f64) + (TARGET_M as f64) / 60.0);
+    let target_y_coords: Vec<f64> = targets_list.iter()
+        .map(|(t_h, t_m)| (*t_h as f64, *t_m as f64))
+        .map(|(t_h, t_m)| 24.0 - (t_h - 12.0 + t_m / 60.0))
+        .collect();
 
-    let xmax = x_ticks_values.iter().fold(-f64::INFINITY, |a, &b| a.max(b));
-
-    let target_x_coords = vec![0f64, xmax];
-    let target_y_coords = vec![target_y_val, target_y_val];
-
-    let target_trace = Scatter::new(target_x_coords, target_y_coords)
+    let target_trace = Scatter::new(x_coords.clone(), target_y_coords.clone())
         .line(Line::new().color("red"))
         .mode(Mode::Lines)
         .show_legend(false);
@@ -155,24 +154,27 @@ fn render_html() -> String {
     //
     // Streak counter
 
-    let streaks = compute_streaks(target_y_val, &y_coords);
+    let streaks = compute_streaks(&target_y_coords, &y_coords);
     let curr_streak = streaks.first().unwrap_or(&0);
     let best_streak = streaks.iter().max().unwrap_or(&0);
     let streak_html = format!(
-        "<b>Target</b>: {TARGET_H:02}:{TARGET_M:02}</br>
-        <b>Streak</b>: {curr_streak} days</br>
+        "<b>Streak</b>: {curr_streak} days</br>
         <b>Best</b>: {best_streak} days</br>"
     );
 
     vec![plot_html, streak_html].join("\n")
 }
 
-fn compute_streaks(target_y_val: f64, y_coords: &Vec<f64>) -> Vec<u64> {
+fn compute_streaks(target_y_coords: &Vec<f64>, y_coords: &Vec<f64>) -> Vec<u64> {
+
+    assert_eq!(target_y_coords.len(), y_coords.len());
+    let t_y_iter = target_y_coords.iter();
+    let y_iter = y_coords.iter();
 
     let mut streaks = Vec::new();
     let mut c = 0;
-    for y in y_coords.iter().rev() {
-        match y < &target_y_val {
+    for (t_y, y) in t_y_iter.zip(y_iter).rev() {
+        match y < &t_y {
             true => {
                 streaks.push(c);
                 c = 0;

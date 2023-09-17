@@ -134,7 +134,7 @@ impl Telegram {
 
 #[derive(Debug, Clone, Deserialize)]
 struct ReturnedUpdates {
-    ok: bool,
+    _ok: bool,
     result: Vec<Update>
 }
 
@@ -146,7 +146,7 @@ struct Update {
 
 #[derive(Debug, Clone, Deserialize)]
 struct Message {
-    message_id: u32,
+    _message_id: u32,
     text: String,
     chat: Chat
 }
